@@ -1,0 +1,507 @@
+---
+title: " Análise Exploratória de Dados - Avaliação Institucional UFT"
+author: "Izabela Sena"
+date: "2025-06-05"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+```{r setup, include=FALSE}
+
+options(repos = c(CRAN = "[https://cran.rstudio.com/](https://cran.rstudio.com/)"))
+
+
+pacotes_necessarios <- c(
+  "tidyverse",  
+  "scales",     
+  "corrplot",  
+  "ggrepel",    
+  "fmsb",
+  "kableExtra",
+  "knitr",
+  "dplyr",
+  "tidyr"
+)
+
+for (pacote in pacotes_necessarios) {
+  if (!require(pacote, character.only = TRUE)) {
+    install.packages(pacote)
+  }
+  library(pacote, character.only = TRUE)
+}
+
+```
+
+# Carregando os dados
+
+```{r carregar dados}
+  data <- readr::read_csv("")
+  
+  # Substitui valores em branco ("") por NA
+  data[data == ""] <- NA
+```
+
+# Exibir o número de respondentes únicos
+
+```{r }
+  unique_respondents <- data %>%
+    mutate(respondent_id = row_number()) %>%
+    distinct(respondent_id, .keep_all = TRUE) %>%
+    nrow()
+  
+  unique_respondents
+```
+
+# Contar o número de questionários respondidos por cada grupo
+
+```{r contar dados}
+  response_counts <- colSums(!is.na(data[c("PROFESSOR", "TECNICO", "ALUNO", "EGRESSO")]))
+  
+  response_counts
+```
+
+# Quantidade de respostas por GrupoXCampus ignorando os grupos de escolha com porcentagem
+
+```{r tabela-campus-grupo-revisada-com-porcentagem, echo=FALSE, message=FALSE, warning=FALSE}
+  
+  prof_mentions <- data %>%
+    filter(!is.na(PROFESSOR_CAMPUS)) %>%
+    select(form_id, Campus = PROFESSOR_CAMPUS) %>%
+    mutate(Grupo = "Professor")
+  
+  tec_mentions <- data %>%
+    filter(!is.na(TECNICO_CAMPUS)) %>%
+    select(form_id, Campus = TECNICO_CAMPUS) %>%
+    mutate(Grupo = "Técnico")
+  
+  aluno_mentions <- data %>%
+    filter(!is.na(ALUNO_CAMPUS)) %>%
+    select(form_id, Campus = ALUNO_CAMPUS) %>%
+    mutate(Grupo = "Aluno")
+  
+  egresso_mentions <- data %>%
+    filter(!is.na(EGRESSO_CAMPUS)) %>%
+    select(form_id, Campus = EGRESSO_CAMPUS) %>%
+    mutate(Grupo = "Egresso")
+  
+  all_mentions_long_revisado <- bind_rows(prof_mentions, tec_mentions, aluno_mentions, egresso_mentions)
+  
+  # 2. Contar a quantidade de respostas por Campus e por Grupo
+  contagem_cruzada_campus_grupo_revisada <- all_mentions_long_revisado %>%
+    group_by(Campus, Grupo) %>%
+    summarise(Quantidade = n(), .groups = 'drop')
+  
+  
+  tabela_final_campus_grupo_revisada <- contagem_cruzada_campus_grupo_revisada %>%
+    pivot_wider(
+      names_from = Grupo,
+      values_from = Quantidade,
+      values_fill = 0
+    ) %>%
+    rowwise() %>%
+    mutate(Total_Campus = sum(c_across(where(is.numeric)))) %>%
+    ungroup() %>%
+    arrange(desc(Total_Campus))
+  
+  colunas_de_grupo_revisadas <- c("Professor", "Técnico", "Aluno", "Egresso")
+  tabela_final_com_totais_revisada <- tabela_final_campus_grupo_revisada %>%
+    bind_rows(
+      summarise(.,
+        Campus = "Total Geral",
+        across(all_of(colunas_de_grupo_revisadas), sum, na.rm = TRUE),
+        Total_Campus = sum(Total_Campus, na.rm = TRUE)
+      )
+    )
+  
+
+  linha_total_geral <- tabela_final_com_totais_revisada %>%
+    filter(Campus == "Total Geral")
+  
+  total_todas_mencoes <- linha_total_geral$Total_Campus
+  
+  # Calcula as porcentagens para cada grupo
+  porcentagens_grupos <- linha_total_geral %>%
+    select(all_of(colunas_de_grupo_revisadas)) %>%
+    mutate(across(everything(), ~ (. / total_todas_mencoes) * 100)) %>%
+    mutate(across(everything(), ~ round(., 2))) 
+  
+  tabela_porcentagens_grupo <- data.frame(
+    Grupo = colunas_de_grupo_revisadas,
+    Porcentagem = as.numeric(porcentagens_grupos[1, ])
+  )
+  
+  tabela_porcentagens_grupo <- tabela_porcentagens_grupo %>%
+    mutate(Rotulo_Porcentagem = paste0(Porcentagem, "%"))
+  
+  cat("### Tabela de Quantidade de Respostas por Campus e por Grupo\n")
+  tabela_final_com_totais_revisada %>%
+    kable("html",
+          caption = "Quantidade de Respostas por Campus e por Grupo Participante (Baseado na Menção do Campus)",
+          align = "lcccc") %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+      full_width = FALSE
+    ) %>%
+    row_spec(nrow(tabela_final_com_totais_revisada), bold = TRUE)
+  
+  cat("\n### Porcentagem de Participação por Grupo (do Total de Menções de Campus)\n")
+  tabela_porcentagens_grupo %>%
+    kable("html",
+          caption = "Participação Percentual de Cada Grupo no Total de Menções de Campus",
+          col.names = c("Grupo", "Porcentagem", ""), 
+          align = "lcc") %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+      full_width = FALSE
+    )
+```
+
+# Porcentagem de participação por grupo com base na comunidade geral
+
+```{r porcentagem-participacao-comunidade, echo=FALSE, message=FALSE, warning=FALSE}
+
+populacao_total_comunidade <- data.frame(
+  Grupo = c("PROFESSOR", "TÉCNICO", "ALUNO", "EGRESSO"),
+  Total_Comunidade = c(737, 685, 5623, 1916) 
+)
+
+respondentes_por_grupo <- tabela_final_com_totais_revisada %>%
+  filter(Campus == "Total Geral") %>% 
+  select(all_of(c("Professor", "Técnico", "Aluno", "Egresso"))) %>% 
+  pivot_longer(
+    cols = everything(),
+    names_to = "Grupo",
+    values_to = "Respondentes"
+  ) %>%
+
+  mutate(Grupo = toupper(Grupo))
+
+
+dados_participacao <- respondentes_por_grupo %>%
+  left_join(populacao_total_comunidade, by = "Grupo") %>%
+  
+  mutate(Porcentagem_Participacao = (Respondentes / Total_Comunidade) * 100) %>%
+  mutate(Porcentagem_Participacao = round(Porcentagem_Participacao, 2)) %>%
+
+  mutate(Rotulo_Porcentagem = paste0(Porcentagem_Participacao, "%")) %>%
+  
+  arrange(desc(Porcentagem_Participacao))
+
+
+dados_participacao %>%
+  select(
+    Grupo,
+    Respondentes,
+    Total_Comunidade,
+    Rotulo_Porcentagem
+  ) %>%
+  kable("html",
+        caption = "Taxa de Resposta por Grupo em Relação à População Total da Universidade",
+        col.names = c("Grupo", "Respondentes", "Total Comunidade", "Participação (%)"),
+        align = "lccc") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE
+  )
+```
+
+# Quantidade de respostas por nivel escolar dos alunos
+
+```{r porcentagem-nivel-curso-alunos, echo=FALSE, message=FALSE, warning=FALSE}
+
+# 1. Filtrar os dados para apenas os alunos que informaram o nível de curso
+alunos_com_nivel <- data %>%
+  filter(!is.na(ALUNO_NIVEL_CURSO))
+
+
+contagem_nivel_curso <- alunos_com_nivel %>%
+  group_by(ALUNO_NIVEL_CURSO) %>%
+  summarise(Quantidade = n(), .groups = 'drop') %>%
+ 
+  mutate(Porcentagem = (Quantidade / sum(Quantidade)) * 100) %>%
+  
+  mutate(Porcentagem = round(Porcentagem, 2)) %>%
+  
+  mutate(Rotulo_Porcentagem = paste0(Porcentagem, "%")) %>%
+  
+  arrange(desc(Quantidade))
+
+
+cat("### Porcentagem do Nível de Curso dos Alunos Respondentes\n")
+
+contagem_nivel_curso %>%
+  kable("html",
+        caption = "Distribuição Percentual do Nível de Curso dos Alunos",
+        col.names = c("Nível de Curso", "Quantidade", "Porcentagem", ""),
+        align = "lccr") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE
+  )
+
+```
+
+#  Aprovação dos eixos com total
+```{r aprovacao-por-eixottl, echo=FALSE, message=FALSE, warning=FALSE}
+
+eixos_questoes <- list(
+  "Eixo 1: Planejamento e Avaliação Institucional" = c("q1", "q1.1", "q2", "q2.1", "q3", "q3.1", "q4", "a4.1", "q5", "q6"),
+  "Eixo 2: Desenvolvimento Institucional" = c("q7", "q8", "q9", "q10", "q11", "q12"),
+  "Eixo 3: Políticas Acadêmicas" = c("q13", "q14", "q15", "q16", "q17", "q18", "q19", "q20", "q21", "q22", "q23", "q24", "q25", "q26", "q27", "q28", "q29", "q29.1", "q30", "q31"),
+  "Eixo 4: Políticas de Gestão" = c("q32", "q33", "q34", "q35", "q36", "q37", "q38", "q39", "q40", "q41", "q42"),
+  "Eixo 5: Infraestrutura e Condições de Trabalho" = c("q43", "q44", "q45", "q46", "q47", "q48", "q49", "q50", "q51", "q52", "q53", "q54", "q55", "q56", "q57", "q58", "q59")
+  # Excluí 'q70' por ser texto livre.
+)
+
+
+calcular_contagens_aprovacao <- function(respostas_numericas) {
+  
+  respostas_num <- as.numeric(as.character(respostas_numericas))
+  
+  
+  respostas_validas <- respostas_num[!is.na(respostas_num)]
+  
+  if (length(respostas_validas) == 0) {
+    return(list(aprovadas_q = 0, total_validas_q = 0, porcentagem_q = NA_real_))
+  }
+  
+  
+  aprovadas <- sum(respostas_validas %in% c(4, 5, 6))
+  total_validas <- length(respostas_validas)
+  porcentagem <- (aprovadas / total_validas) * 100
+  
+  list(aprovadas_q = aprovadas, total_validas_q = total_validas, porcentagem_q = porcentagem)
+}
+
+
+resultados_eixos <- tibble(
+  Eixo = names(eixos_questoes),
+  Questoes = eixos_questoes
+) %>%
+  rowwise() %>% 
+  mutate(
+    
+    dados_eixo_questoes = list(select(data, all_of(Questoes))),
+    
+    
+    contagens_por_questao = list(purrr::map(dados_eixo_questoes, calcular_contagens_aprovacao)),
+    
+    
+    Total_Respostas_Satisfatorias = purrr::map_dbl(contagens_por_questao, "aprovadas_q") %>% sum(na.rm = TRUE),
+    
+   
+    Total_Respostas_Validas = purrr::map_dbl(contagens_por_questao, "total_validas_q") %>% sum(na.rm = TRUE),
+    
+    
+    Aprovacao_Eixo_Porcentagem = (Total_Respostas_Satisfatorias / Total_Respostas_Validas) * 100
+  ) %>%
+  ungroup() %>%
+  
+  select(Eixo, Total_Respostas_Satisfatorias, Total_Respostas_Validas, Aprovacao_Eixo_Porcentagem) %>%
+  mutate(Aprovacao_Eixo_Porcentagem = round(Aprovacao_Eixo_Porcentagem, 2)) %>%
+  mutate(Rotulo_Porcentagem = paste0(Aprovacao_Eixo_Porcentagem, "%")) %>%
+  arrange(desc(Aprovacao_Eixo_Porcentagem))
+
+
+cat("### Porcentagem de Aprovação por Eixo com Contagens Detalhadas\n")
+
+resultados_eixos %>%
+  kable("html",
+        caption = "Porcentagem de Aprovação por Eixo (Respostas 4-6) com Contagens",
+        col.names = c("Eixo", "Respostas Satisfatórias", "Total de Respostas Válidas", "Aprovação (%)", ""),
+        align = "lcccc") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE
+  )
+```
+
+# Preparação dos dados para o gráfico de radar
+
+```{r data-preparation}
+
+eixos_questoes <- list(
+  "Eixo 1: Planejamento e Avaliação Institucional" = c("q1", "q1.1", "q2", "q2.1", "q3", "q3.1", "q4", "a4.1", "q5", "q6"),
+  "Eixo 2: Desenvolvimento Institucional" = c("q7", "q8", "q9", "q10", "q11", "q12"),
+  "Eixo 3: Políticas Acadêmicas" = c("q13", "q14", "q15", "q16", "q17", "q18", "q19", "q20", "q21", "q22", "q23", "q24", "q25", "q26", "q27", "q28", "q29", "q29.1", "q30", "q31"),
+  "Eixo 4: Políticas de Gestão" = c("q32", "q33", "q34", "q35", "q36", "q37", "q38", "q39", "q40", "q41", "q42"),
+  "Eixo 5: Infraestrutura e Condições de Trabalho" = c("q43", "q44", "q45", "q46", "q47", "q48", "q49", "q50", "q51", "q52", "q53", "q54", "q55", "q56", "q57", "q58", "q59")
+)
+
+
+df_respostas <- data 
+
+dados_brutos <- lapply(eixos_questoes, function(nomes_das_questoes) {
+  questoes_existentes <- intersect(nomes_das_questoes, names(df_respostas))
+  df_eixo <- df_respostas[, questoes_existentes, drop = FALSE]
+  vetor_de_respostas <- unlist(df_eixo)
+  vetor_numerico <- as.numeric(vetor_de_respostas)
+  vetor_limpo <- na.omit(vetor_numerico)
+  vetor_final <- vetor_limpo[vetor_limpo >= 1 & vetor_limpo <= 6]
+  return(vetor_final)
+})
+
+
+niveis <- 1:6
+df_percentual_e_contagem <- enframe(dados_brutos, name = "eixo", value = "notas") %>%
+  unnest(cols = c(notas)) %>%
+  count(eixo, nota = notas) %>%
+  complete(eixo, nota = niveis, fill = list(n = 0)) %>%
+  group_by(eixo) %>%
+  mutate(
+    percentual = (n / sum(n)) * 100,
+    contagem_e_percentual = sprintf("%d (%.1f%%)", n, percentual)
+  ) %>%
+  ungroup()
+
+
+print("Total de respostas válidas (1-6) por eixo:")
+df_percentual_e_contagem %>%
+  
+  group_by(eixo) %>%
+  summarise(total_respostas = sum(n)) %>%
+  print()
+
+df_percentual <- df_percentual_e_contagem
+```
+
+Mostrar os dados coletados anteriormente
+
+```{r tabela-percentuais, echo=FALSE}
+
+df_tabela <- df_percentual_e_contagem %>% 
+  mutate(nota_label = paste("Nota", nota)) %>%
+  
+
+  select(eixo, nota_label, contagem_e_percentual) %>% 
+  
+
+  pivot_wider(names_from = nota_label, values_from = contagem_e_percentual) 
+  
+
+kable(
+  df_tabela, 
+  caption = "Distribuição de Respostas por Eixo (Contagem Absoluta e Percentual)"
+)
+```
+
+# Dados para gerar o boxplot do eixo 2
+
+```{r selecionar_questoes}
+
+colunas_questoes <- c("q7", "q8", "q9", "q10", "q11", "q12")
+
+
+contagens <- data %>%
+  select(all_of(colunas_questoes)) %>%
+  pivot_longer(
+    cols = everything(),      
+    names_to = "questao",      
+    values_to = "resposta"     
+  ) %>%
+  
+  
+  count(questao, resposta, name = "total") %>%
+
+  
+  pivot_wider(
+    names_from = resposta,  
+    values_from = total,     
+    values_fill = 0         
+  )
+
+
+print(contagens)
+```
+
+# Análise de Médias e Identificação de Descartes (Q43 a Q59) COM TODOS OS ALUNOS PÉGANDO POR CAMPUS
+
+```{r analise-detalhada-alunos2, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+
+colunas_eixo5 <- c("q43", "q44", "q45", "q46", "q49", "q50", 
+                   "q51", "q52", "q53", "q54", "q55", "q56", "q57", "q58", "q59")
+
+total_questoes <- length(colunas_eixo5)
+criterio_minimo <- ceiling(total_questoes * 0.75) # 13 questões
+
+
+base_alunos <- data %>%
+  mutate(id_original = row_number()) %>% 
+  
+
+  filter(!is.na(ALUNO_CAMPUS) & ALUNO_CAMPUS != "") %>% 
+  
+  select(id_original, ALUNO_CAMPUS, all_of(colunas_eixo5)) %>%
+  
+  pivot_longer(cols = all_of(colunas_eixo5), names_to = "pergunta", values_to = "nota") %>%
+  mutate(nota = as.numeric(as.character(nota))) %>%
+  group_by(id_original, ALUNO_CAMPUS) %>%
+  summarise(
+    respostas_preenchidas = sum(!is.na(nota)),
+    media_individual = round(mean(nota, na.rm = TRUE), 2),
+    .groups = 'drop'
+  )
+
+
+total_alunos_selecionados <- nrow(base_alunos)
+
+
+cat("Total de alunos selecionados para análise (Eixo 5):", total_alunos_selecionados, "\n")
+
+# 3. Separar os aprovados (>= 75%)
+alunos_aprovados <- base_alunos %>%
+  filter(respostas_preenchidas >= criterio_minimo) %>%
+  arrange(ALUNO_CAMPUS, desc(media_individual))
+
+# 4. Separar os descartados (< 75%)
+alunos_descartados <- base_alunos %>%
+  filter(respostas_preenchidas < criterio_minimo) %>%
+  arrange(ALUNO_CAMPUS, respostas_preenchidas)
+
+# --- EXIBIÇÃO DOS RESULTADOS ---
+cat("# 1. Lista de Alunos Aprovados e Suas Médias\n")
+cat("*(Alunos que responderam pelo menos", criterio_minimo, " questões)*\n")
+
+alunos_aprovados %>%
+  select(id_original, ALUNO_CAMPUS, respostas_preenchidas, media_individual) %>%
+  kable("html", col.names = c("ID da Linha", "Campus", "Questões Respondidas", "Média Simples")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
+  scroll_box(height = "400px")
+
+
+campi_com_aprovados <- unique(alunos_aprovados$ALUNO_CAMPUS)
+
+
+for (nome_campus in campi_com_aprovados) {
+
+ 
+  dados_campus <- alunos_aprovados %>%
+    filter(ALUNO_CAMPUS == nome_campus) %>%
+    select(id_original, respostas_preenchidas, media_individual)
+
+  
+  nome_arquivo <- paste0("Aprovados_Campus_", gsub(" ", "_", nome_campus), ".txt")
+
+  # Salvar o arquivo TXT
+  write.table(dados_campus,
+              file = nome_arquivo,
+              sep = "\t",
+              row.names = FALSE,
+              quote = FALSE,
+              fileEncoding = "UTF-8")
+}
+
+cat("### 2. Lista de Alunos Descartados (Insuficiência de Dados)\n")
+cat("*(Alunos que responderam menos de 75% das questões do bloco)*\n")
+
+alunos_descartados %>%
+  select(id_original, ALUNO_CAMPUS, respostas_preenchidas) %>%
+  kable("html", col.names = c("ID da Linha", "Campus", "Questões Respondidas (Abaixo de 13)")) %>%
+  kable_styling(bootstrap_options = c("striped", "bordered"), full_width = TRUE) %>%
+  scroll_box(height = "300px")
+```
+
