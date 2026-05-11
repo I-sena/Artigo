@@ -1,6 +1,6 @@
-# Análise de Dados: ARTIGO-CSBC
+# Análise de Dados
 
-Este repositório contém os scripts, dados e documentos utilizados para o desenvolvimento do artigo submetido ao Congresso da Sociedade Brasileira de Computação (CSBC). O projeto envolve análise exploratória de dados (EDA) utilizando Python e R, focando na autoavaliação institucional.
+Este repositório contém os scripts, dados e documentos utilizados para o desenvolvimento do artigo sobre a Autoavaliação Institucional da UFT 2024. O projeto envolve análise exploratória de dados (EDA) utilizando Python e R, focando na autoavaliação institucional.
 
 ## 📂 Estrutura do Repositório
 
