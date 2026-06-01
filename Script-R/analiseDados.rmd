@@ -1,6 +1,6 @@
 ---
 title: " Análise Exploratória de Dados - Avaliação Institucional UFT"
-author: "Izabela Sena"
+author: ""
 date: "2025-06-05"
 output:
   html_document: default
